@@ -2,17 +2,30 @@ const axios = require('axios')
 const { default: BigNumber } = require("bignumber.js")
 const sdk = require('@defillama/sdk')
 const { transformBalances } = require('../portedTokens')
+const { PromisePool } = require('@supercharge/promise-pool')
+const { log } = require('../utils')
 
+// where to find chain info
+// https://proxy.atomscan.com/chains.json
 // https://cosmos-chain.directory/chains/cosmoshub
 // https://cosmos-chain.directory/chains
 const endPoints = {
   crescent: 'https://mainnet.crescent.network:1317',
   osmosis: 'https://lcd.osmosis.zone',
   cosmos: 'https://cosmoshub-lcd.stakely.io',
+  kujira: 'https://lcd.kaiyo.kujira.setten.io',
+  comdex: 'https://rest.comdex.one',
+  terra: 'https://columbus-lcd.terra.dev',
+  terra2: 'https://phoenix-lcd.terra.dev',
+  umee: 'https://api.mainnet.network.umee.cc',
+  orai: 'https://lcd.orai.io',
+  juno: 'https://lcd-juno.cosmostation.io',
 }
 
 const chainSubpaths = {
   crescent: 'crescent',
+  comdex: 'comdex',
+  umee: 'umee',
 }
 
 function getEndpoint(chain) {
@@ -70,9 +83,9 @@ async function getBalance2({ balances = {}, owner, block, chain } = {}) {
   if (block) {
     endpoint += `?height=${block - (block % 100)}`
   }
-  const data = (await axios.get(endpoint)).data.balances
-  for (const {denom, amount} of data)
-    sdk.util.sumSingleBalance(balances,denom,amount)
+  const { data: { balances: data } } = await axios.get(endpoint)
+  for (const { denom, amount } of data)
+    sdk.util.sumSingleBalance(balances, denom, amount)
   return balances
 }
 
@@ -90,6 +103,10 @@ async function lpMinter({ token, block, chain } = {}) {
 async function queryContract({ contract, chain, data }) {
   if (typeof data !== 'string') data = JSON.stringify(data)
   data = Buffer.from(data).toString('base64')
+  if (chain === 'terra') {
+    let path = `${getEndpoint(chain)}/terra/wasm/v1beta1/contracts/${contract}/store?query_msg=${data}`
+    return (await axios.get(path)).data.query_result
+  }
   return (await axios.get(`${getEndpoint(chain)}/cosmwasm/wasm/v1/contract/${contract}/smart/${data}`)).data.data
 }
 
@@ -112,37 +129,21 @@ async function queryContractStore({ contract, queryParam, block, chain = false, 
   return query(url, block, chain)
 }
 
-function sumSingleBalance(balances, token, balance, price) {
-  const { coingeckoId, label, decimals = 0, } = tokenMapping[token] || {}
+async function sumTokens({ balances = {}, owners = [], chain, }) {
+  log(chain, 'fetching balances for ', owners.length)
+  let parallelLimit = 25
 
-  if (coingeckoId || (label && price)) {
-    token = coingeckoId || 'terrausd'
+  const { errors } = await PromisePool.withConcurrency(parallelLimit)
+    .for(owners)
+    .process(async (owner) => getBalance2({ balances, owner, chain, }))
 
-    if (decimals)
-      balance = BigNumber(balance).shiftedBy(-1 * decimals)
-
-    if (!coingeckoId)
-      balance = balance.multipliedBy(BigNumber(price))   // convert the value to UST
-
-    if (!balances[token])
-      balances[token] = BigNumber(0)
-    else if (typeof balances[token] === 'string')
-      balances[token] = BigNumber(balances[token]).shiftedBy(-1 * decimals)
-
-    balances[token] = balances[token].plus(balance)
-    return
-  }
-
-  sdk.util.sumSingleBalance(balances, token, balance)
-  return balances
-}
-
-async function sumTokens({balances = {}, owners = [], chain, }) {
-  await Promise.all(owners.map(i => getBalance2({ balances, owner: i, chain, })))
+  if (errors && errors.length)
+    throw errors[0]
   return transformBalances(chain, balances)
 }
 
 module.exports = {
+  endPoints,
   totalSupply,
   getBalance,
   getDenomBalance,
@@ -150,7 +151,6 @@ module.exports = {
   query,
   queryV1Beta1,
   queryContractStore,
-  sumSingleBalance,
   queryContract,
   sumTokens,
 }

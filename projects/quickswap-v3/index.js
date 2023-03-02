@@ -1,12 +1,12 @@
 const { request, gql } = require("graphql-request");
-const { getBlock } = require("../helper/getBlock");
+const { getBlock } = require("../helper/http");
 const { sumTokens2 } = require("../helper/unwrapLPs");
 const { log } = require("../helper/utils");
 
 const graphs = {
   polygon: "https://api.thegraph.com/subgraphs/name/sameepsi/quickswap-v3",
   dogechain:
-    "https://api-dogechain.algebra.finance/subgraphs/name/quickswap/dogechain-info",
+    "https://graph-node.dogechain.dog/subgraphs/name/quickswap/dogechain-info",
 };
 
 const blacklists = {
